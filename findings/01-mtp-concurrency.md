@@ -41,6 +41,9 @@ If it serves parallel agents, measure the aggregate before believing any of them
 - An unresolved discrepancy exists in my own data: the same model measured 22.3 t/s in the
   dedicated A/B but ~12 t/s through the production router path under different sampling.
   Ratios within each experiment are solid; absolute cross-experiment comparisons are not.
-- `--spec-draft-p-min 0.7` in the winning arm is a legacy value; the binary default is
-  0.00 and preliminary community data on identical hardware suggests 0.0 is faster. A/B
-  pending; this finding will be updated.
+- ~~`--spec-draft-p-min 0.7` in the winning arm is a legacy value; A/B pending.~~
+  **Resolved 2026-08-15**: the A/B ran and it is a wash (+1.4% for the 0.0 default; the
+  gate trades draft volume against acceptance rate almost exactly). The single-user gain
+  also proved highly content- and sampling-sensitive: 12 to 28.5 t/s for the same model
+  and flags depending on conditions. Full data in
+  [06-mtp-pmin-and-bandwidth-arithmetic](06-mtp-pmin-and-bandwidth-arithmetic.md).

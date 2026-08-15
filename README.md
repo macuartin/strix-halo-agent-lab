@@ -34,6 +34,8 @@ follows that rule or the finding explains why it does not.
 | [03](findings/03-router-mode-gotchas.md) | llama.cpp router-mode operational traps | `status.args` vs `status.preset`, async load/unload races, the autoload footgun |
 | [04](findings/04-hybrid-gdn-context-scaling.md) | Hybrid GDN vs full-attention context scaling | Dense-hybrid decode stays **flat to 87K tokens** (100.7% retained) while the MoE drops to 30.3% |
 | [05](findings/05-vulkan-tuning-gfx1151.md) | Vulkan/RADV tuning that survived measurement | `-ub 1024` +13% prefill; KV q8_0 **hurts** on Vulkan; cache-reuse silently broken on hybrid attention |
+| [06](findings/06-mtp-pmin-and-bandwidth-arithmetic.md) | MTP p-min A/B and the arithmetic behind community speed gaps | p-min 0.7 vs 0.0 is a **wash**; custom-quant speed claims decompose into bytes-per-token; two independent benches agree to 3 significant figures |
+| [07](findings/07-complementary-failures-and-eval-variance.md) | Complementary model failures and the single-run eval trap | Fast MoE and tenacious dense hybrid fail **different** tasks (7/8 each); same task passed in 473 s, failed in 20 s, passed again: single-pass evals are samples, not measurements |
 
 ## Method, in three rules
 
