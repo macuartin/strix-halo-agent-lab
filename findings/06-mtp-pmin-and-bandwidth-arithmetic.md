@@ -57,6 +57,30 @@ Custom-format speed claims decompose entirely into (a) fewer bytes per token, pa
 quantization loss, and (b) MTP conditions. Prefill is where custom Vulkan kernels showed a
 real ~13% edge in the community data; decode is physics.
 
+## Postscript: AMD's official Day 0 number completes the triangle
+
+AMD's [Day 0 blog for Qwen 3.8 27B](https://www.amd.com/en/blogs/2026/run-qwen-3-8-27b-on-amd-ryzen-ai-max-and-radeon-graphics-cards-day-0.html)
+(August 2026) publishes **up to 24.5 t/s on Ryzen AI Max+ 395** (llama.cpp, Vulkan,
+Windows, MTP=4, average of 3+ runs; quant not stated). The full chain of independent
+measurements on the same silicon now reads:
+
+| Bench | Conditions | Decode |
+|---|---|---:|
+| AMD official | Windows, Vulkan, MTP=4 | 24.5 t/s |
+| This repo | Linux, RADV, MTP n4, greedy code prompt | 27.2-28.5 t/s |
+| Community (ROCmFPX) | Linux, custom FP4 quant ~13% smaller | 31-32 t/s |
+
+Each step is explained: OS/driver stack for the first gap (RADV on Linux runs ~12% ahead
+of AMD's own Windows number), bytes per token for the second. Three benches, zero
+contradictions, no magic anywhere.
+
+Two more corroborations from the same post: AMD's recommended MTP draft length for Strix
+Halo is **4**, matching what this repo's A/B and the community setup independently
+converged on. And their optimal for the Radeon AI PRO R9700 is **2**, which fits the
+bandwidth model: ~3x the memory bandwidth makes the base model faster relative to
+speculation overhead, so shorter drafts win. Optimal draft length appears to scale
+inversely with memory bandwidth, which is a testable prediction for other hardware.
+
 ## Caveats
 
 - Three passes per arm, one prompt family. The wash verdict is robust for code prompts;
