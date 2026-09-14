@@ -1,7 +1,19 @@
 # llama.cpp router mode: the operational traps, each one paid for
 
-**Date:** 2026-08-03 to 2026-08-15
-**Build:** llama.cpp `b118-7044859`, router mode (multi-model, one endpoint, presets in an ini file)
+**Date:** 2026-08-03 to 2026-08-15 (items 1 to 5), 2026-09-14 (items 6 and 7)
+**Status:** measured, in production
+**Build:** llama.cpp `b118-7044859` (items 1 to 5), `b10944` (items 6 and 7)
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** the router's full set: a 35B-A3B titular, embedding and reranker models, on-demand presets
+**Harness:** opencode, Codex CLI, a RAG indexer, cron jobs; whatever talks to the router
+
+## TL;DR
+
+Seven traps of llama.cpp router mode, each paid for: `status.preset` lies and only
+`status.args` is live; `/models/load` and `/unload` answer before finishing; eviction is
+silent; autoload turns a metrics scrape into a 59 GiB load; readiness is a per-model
+question; slot selection by prefix similarity steals a live conversation's slot and, below
+50% kept, clears it; `?reload=1` restarts every instance whose preset text changed.
 
 Router mode is the right architecture for a multi-model box: one port, per-model presets,
 load/unload over HTTP. These are the traps I hit running it in production for two weeks.
@@ -84,3 +96,28 @@ the one it was launched with, including a changed comment line, is stopped and m
 loaded again. Removing a different model's section leaves it alone. Edit presets, reload,
 then `POST /models/load` the ones that disappeared; do not do it while an agent is mid-turn
 on that model.
+
+## Reproduce
+
+```
+KEY=...
+# 1. what is actually running
+curl -s -H "Authorization: Bearer $KEY" http://127.0.0.1:18080/models \
+  | jq -r '.data[] | "\(.id)\t\(.status.value)\t\(.status.args | join(" "))"'
+# 2. load, then poll until the model is really there
+curl -s -X POST -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  http://127.0.0.1:18080/models/load -d '{"model":"NAME"}'
+until curl -s -H "Authorization: Bearer $KEY" http://127.0.0.1:18080/models \
+  | jq -e '.data[] | select(.id=="NAME" and .status.value=="loaded")' >/dev/null; do sleep 5; done
+# 3. diff the loaded set around any load to catch a silent eviction
+# 6. slot selection: `journalctl -u llama-server | grep "selected slot"` shows f_sim and f_keep
+```
+
+Run the router with `--no-models-autoload` (item 4). For item 7, edit the preset, hit
+`GET /models?reload=1`, then re-load whatever disappeared.
+
+## Related
+
+- [10](10-hybrid-gdn-prefix-cache.md): why a stolen slot is a full prefill on hybrid GDN models
+- [11](11-125b-model-on-125gib-apu.md): what happens when a `load-on-startup` model does not fit
+- [02](02-agent-harness-token-economics.md): the harness that hit item 6 and the cost it paid

@@ -1,11 +1,19 @@
 # A 125B MoE on a 125 GiB APU: where the memory actually goes, and why zram makes it worse
 
 **Date:** 2026-09-10 to 2026-09-14
-**Build:** llama.cpp `b10944` (`b6b003d2c`), Vulkan (RADV), gfx1151, router mode
-**Model:** Qwen3.8-Flash-Next UD-IQ4_XS (Unsloth), 93.7 GB in three shards, 262K context
-served as `-c 262144 -np 2 --no-kv-unified`, plus three small service models
-(a 9B contextualizer, an embedding model, a reranker, ~9 GiB together)
-**OS:** Omarchy (Arch), kernel 7.2.3, `amdgpu.gttsize=131072`, zram swap (Omarchy default)
+**Status:** measured forensically from the incident; no controlled load ramp
+**Build:** llama.cpp `b10944` (`b6b003d2c`), router mode; Omarchy (Arch), kernel 7.2.3, `amdgpu.gttsize=131072`, zram swap
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.8-Flash-Next UD-IQ4_XS (Unsloth), 93.7 GB in three shards, `-c 262144 -np 2 --no-kv-unified`; plus a 9B contextualizer, an embedding model and a reranker (~9 GiB)
+**Harness:** opencode (the process the first OOM killed)
+
+## TL;DR
+
+Flash-Next is not 94 GB: it is **~80 GiB of GTT plus ~27 GiB of host RAM** for its 51B
+n-gram table, ~117 GiB with three service models on a 125.1 GiB APU. zram compressed the
+evicted weights **1.08x**, so swapping freed nothing and slowed decode from 22 to 1.8 t/s.
+Two OOM kills in one afternoon, the second taking the desktop and the model server with it,
+because `amdgpu.gttsize` was set above physical RAM.
 
 Strix Halo is sold on "128 GB for models". Qwen3.8-Flash-Next is the first open model in
 the class where that number stops being comfortable: 125B parameters, 6B active, plus a
@@ -102,3 +110,22 @@ days" as an observation, not a baseline.
   the kernel evicted; a pure measurement on the table alone would be marginally lower.
 - I measured the incident, not a controlled load ramp. The numbers are forensic, taken
   from `/proc`, `zramctl`, `journalctl` and the DRM sysfs after the fact.
+
+## Reproduce
+
+```
+awk '{printf "%.1f GiB\n", $1/2^30}' /sys/class/drm/card*/device/mem_info_gtt_used
+for p in $(pgrep -x llama-server); do grep -E 'RssAnon|RssFile|VmSwap' /proc/$p/status; done
+grep -E 'MemAvailable|Cached|AnonPages' /proc/meminfo
+zramctl --output NAME,DISKSIZE,DATA,COMPR,TOTAL; sysctl vm.swappiness
+journalctl -k | grep -E 'Out of memory|oom-kill'
+cat /proc/cmdline | tr ' ' '\n' | grep -E 'gttsize|ttm'
+```
+
+Budget before loading: GTT footprint of the experts plus whatever tensors the build keeps
+on CPU, plus KV, compute buffers, service models and the desktop.
+
+## Related
+
+- [03](03-router-mode-gotchas.md): autoload and eviction: the router will faithfully reload what killed you
+- [10](10-hybrid-gdn-prefix-cache.md): why this model's first request costs a full prefill every session

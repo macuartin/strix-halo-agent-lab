@@ -1,8 +1,19 @@
 # MTP tuning: the p-min trap is a wash, and community speed gaps are just arithmetic
 
-**Date:** 2026-08-15
-**Build:** llama.cpp `b118-7044859`, Vulkan/RADV, gfx1151
-**Model:** Qwen3.8-27B (dense hybrid GDN, MTP head embedded), UD-Q4_K_XL (17.9 GB)
+**Date:** 2026-08-15; postscript August 2026
+**Status:** measured; cross-validated against two independent benches
+**Build:** llama.cpp `b118-7044859`
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.8-27B UD-Q4_K_XL (17.9 GB), MTP head embedded
+**Harness:** none; dedicated server instance, greedy sampling
+
+## TL;DR
+
+`--spec-draft-p-min 0.7` vs the `0.0` default is a wash (+1.4%): fewer drafts at 89%
+acceptance against more at 77%. The same model decodes 12, 22 or 28 t/s depending only on
+content and sampling. The rest of the gap to a community 31-32 t/s is bytes per token
+(`27.5 x 1.15 = 31.6`), and the same arithmetic reproduces their 35B-A3B baseline to three
+significant figures. AMD's official 24.5 t/s closes the triangle.
 
 ## Why this A/B exists
 
@@ -90,3 +101,20 @@ inversely with memory bandwidth, which is a testable prediction for other hardwa
   the numbers check out against independent measurement.
 - Finding [01](01-mtp-concurrency.md)'s caveat about this pending A/B is now resolved and
   updated in place.
+
+## Reproduce
+
+```
+llama-server -m Qwen3.8-27B-UD-Q4_K_XL.gguf -ngl 99 --spec-type draft-mtp \
+  --spec-draft-n-max 4 --spec-draft-p-min 0.7      # arm A; then 0.0; then 0.0 + --spec-draft-ngl all
+# one code-writing prompt, 256 tokens, temperature 0, three passes per arm;
+# median of timings.predicted_per_second and the draft acceptance ratio
+```
+
+The bandwidth check needs no server: `t/s_yours x (bytes_yours / bytes_theirs)` should
+land on their number if the difference is quantization size.
+
+## Related
+
+- [01](01-mtp-concurrency.md): the single-user and concurrency A/Bs this refines
+- [04](04-hybrid-gdn-context-scaling.md): the same model at depth, where bandwidth arithmetic also holds

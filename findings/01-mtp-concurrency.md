@@ -1,7 +1,11 @@
 # MTP speculative decoding: single-user win, multi-user loss
 
-**Date:** 2026-08-15 (single-user A/B), 2026-08-09 (concurrency A/B)
-**Build:** llama.cpp `b118-7044859` (single-user), `ee0445c` (concurrency), Vulkan/RADV, gfx1151
+**Date:** 2026-08-09 (concurrency A/B), 2026-08-15 (single-user A/B)
+**Status:** measured; the single-user gain is qualified by [06](06-mtp-pmin-and-bandwidth-arithmetic.md) (content and sampling sensitivity)
+**Build:** llama.cpp `ee0445c` (concurrency), `b118-7044859` (single-user)
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.8-27B UD-Q4_K_XL, MTP head embedded (single-user); a 35B-A3B MoE with an MTP head (concurrency)
+**Harness:** none; direct requests, 3 simulated concurrent agents
 
 ## TL;DR
 
@@ -47,3 +51,24 @@ If it serves parallel agents, measure the aggregate before believing any of them
   also proved highly content- and sampling-sensitive: 12 to 28.5 t/s for the same model
   and flags depending on conditions. Full data in
   [06-mtp-pmin-and-bandwidth-arithmetic](06-mtp-pmin-and-bandwidth-arithmetic.md).
+
+## Reproduce
+
+Single-user arm, on a dedicated server instance:
+
+```
+llama-server -m Qwen3.8-27B-UD-Q4_K_XL.gguf -ngl 99 \
+  --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-p-min 0.7
+# repeat the same prompt three times per arm; read `timings.predicted_per_second`
+# and the draft acceptance counters from the server response
+```
+
+Concurrency arm: the production server (`--parallel 8 --kv-unified`), three clients
+sending short-output requests at once, aggregate decode t/s summed from each response's
+`timings` block, with and without `--spec-type`.
+
+## Related
+
+- [06](06-mtp-pmin-and-bandwidth-arithmetic.md): the p-min A/B this file's caveat was waiting for, and the bandwidth arithmetic
+- [04](04-hybrid-gdn-context-scaling.md): why the dense hybrid is bandwidth-starved enough for MTP to pay
+- [10](10-hybrid-gdn-prefix-cache.md): why speculation is a per-lane decision on this architecture family

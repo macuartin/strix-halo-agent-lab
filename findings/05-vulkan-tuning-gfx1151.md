@@ -1,8 +1,23 @@
 # Vulkan/RADV tuning on gfx1151: what survived measurement
 
 **Date:** 2026-08-09 to 2026-08-15
-**Build:** llama.cpp `ee0445c` through `b118-7044859`, Vulkan (RADV), gfx1151
-**Workload:** multi-agent serving (`--parallel 8`, unified KV, 524K context pool on a 35B-A3B MoE)
+**Status:** measured; the prefix cache remark under "What silently does nothing" is qualified by [10](10-hybrid-gdn-prefix-cache.md)
+**Build:** llama.cpp `ee0445c` through `b118-7044859`
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.6-35B-A3B UD-Q5_K_M under `--parallel 8 --kv-unified -c 524288`
+**Harness:** none; 3 simulated concurrent agents
+
+> **Qualified by [finding 10](10-hybrid-gdn-prefix-cache.md) (2026-09-14).** "The standard
+> prefix cache works fine" below is true for a conversation that extends the cached one. It
+> does not reuse a partial prefix on this model family: a request that diverges earlier than
+> the last micro-batch is reprocessed in full.
+
+## TL;DR
+
+`-ub 1024` gave +13% prefill and 2048 was worse; a unified KV pool cut re-processing 2.25x
+under three concurrent agents; KV q8_0 cost -22% prefill at 32K for +5.6% decode; `--cache-reuse`
+never engages on hybrid attention and says nothing; `llama-bench` needs an explicit `-ngl 99`
+or it under-offloads by ~15%.
 
 Tuning folklore dies fast when you measure. These are the knobs that mattered on this
 machine, the ones that hurt, and the one that silently does nothing.
@@ -49,3 +64,24 @@ the auto value did not offload everything.
   smaller batches.
 - Vulkan (RADV) only. ROCm/HIP behaves differently on several of these (community numbers
   show the KV and prefill tradeoffs shifting between backends).
+
+## Reproduce
+
+```
+# prefill vs micro-batch, on the serving configuration, not llama-bench
+llama-server ... --parallel 8 --kv-unified -c 524288 -ub 1024   # then -ub 2048, -ub 512
+# KV quantization arm
+llama-server ... -ctk q8_0 -ctv q8_0                            # vs default f16
+# offload check
+llama-bench -m model.gguf -ngl 99 -p 512 -n 128                  # read the reported ngl
+```
+
+Measure prefill at depth (32K), not only `pp512`: the q8_0 penalty is a deep-context
+effect. Re-processing under concurrency is the `prompt_n` sum across three round-robin
+agents with stable ~48K prefixes, with and without `--kv-unified`.
+
+## Related
+
+- [10](10-hybrid-gdn-prefix-cache.md): what the prefix cache does and does not do on this family
+- [01](01-mtp-concurrency.md): speculation under the same concurrent workload
+- [04](04-hybrid-gdn-context-scaling.md): why the hybrid's KV is small enough that q8_0 buys nothing

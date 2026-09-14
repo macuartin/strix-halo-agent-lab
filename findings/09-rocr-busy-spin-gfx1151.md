@@ -1,10 +1,19 @@
 # The ROCR runtime that steals a core, and the speedup that wasn't
 
 **Date:** 2026-09-01
-**Build:** `torch 2.12.0+rocm7.14.1` from AMD's multi-arch index with the `device-gfx1151`
-extras (`rocm-sdk-core 7.14.1`, bundled ROCR 1.21) against system `hsa-rocr 7.2.4-1`
-(ROCR 1.18). Mesa 26.2.1 (RADV), kernel 7.1.9-arch1-2, Omarchy (Arch).
-**Workload:** any process that reaches the GPU through the ROCm PyTorch wheels.
+**Status:** measured; the throughput claim of the first version is retracted in place
+**Build:** `torch 2.12.0+rocm7.14.1` from AMD's multi-arch index with the `device-gfx1151` extras (`rocm-sdk-core 7.14.1`, bundled ROCR 1.21) against system `hsa-rocr 7.2.4-1` (ROCR 1.18); Mesa 26.2.1, kernel 7.1.9-arch1-2, Omarchy (Arch)
+**Backend:** ROCm (HIP) through the PyTorch wheels; not the Vulkan llama.cpp the rest of this repo measures
+**Models:** none; synthetic matmuls
+**Harness:** any process that reaches the GPU through the ROCm PyTorch wheels
+
+## TL;DR
+
+The ROCR `AsyncEventsLoop` thread inside the ROCm PyTorch wheels busy-spins one full core
+after any GPU op, for the life of the process: **1009 ticks/10 s, 0 with a 15-symbol shim**
+that preloads the system runtime. The 69% throughput win I first reported was kernel
+compilation time; warmed up, the difference is noise. A `GGML_VULKAN=ON` llama.cpp never
+loads this runtime and is unaffected.
 
 Two results, and the second one is the reason this file exists. The busy-spin is real,
 total, and cheap to fix. The performance win I thought came with it evaporated the moment
@@ -105,3 +114,27 @@ you act on it.
   different `hsa-rocr` will shift the symbol set: regenerate the diff, do not copy the list.
 - The throughput A/B is a single GEMM shape. It rules out a large win on that shape; it does
   not rule one out on dispatch-heavy graphs.
+
+## Reproduce
+
+```
+# 1. one GPU op, then idle; sample per-thread CPU ticks over 10 s
+python -c 'import torch,time; a=torch.randn(1024,1024,device="cuda"); (a@a).sum().item(); time.sleep(30)' &
+pid=$!; sleep 5
+for t in /proc/$pid/task/*; do awk '{print $14+$15}' $t/stat; done | sort -n | tail -1; sleep 10
+for t in /proc/$pid/task/*; do awk '{print $14+$15}' $t/stat; done | sort -n | tail -1
+# 2. the shim: symbols the wheel's ROCR exports that the system one lacks
+nm -D --defined-only <wheel libhsa> | awk '{print $3}' | sort -u > bundled
+nm -D --defined-only /opt/rocm/lib/libhsa-runtime64.so.1.18.0 | awk '{print $3}' | sort -u > system
+comm -23 bundled system     # stub each as `int f() { return HSA_STATUS_ERROR_INVALID_ARGUMENT; }`
+gcc -shared -fPIC -o libhsa_shim.so stubs.c
+LD_PRELOAD="./libhsa_shim.so /opt/rocm/lib/libhsa-runtime64.so.1.18.0" python bench.py
+```
+
+Warm up before timing anything (5 warmup iterations, then 50 timed): the first version of
+this file did not, and reported a speedup that was compilation.
+
+## Related
+
+- [05](05-vulkan-tuning-gfx1151.md): the Vulkan backend that this defect does not touch
+- [11](11-125b-model-on-125gib-apu.md): the other way this APU's shared budget bites: memory instead of a core

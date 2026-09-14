@@ -1,8 +1,19 @@
 # Two models, opposite failures: what single-run agent evals cannot tell you
 
 **Date:** 2026-08-15
-**Build:** llama.cpp `b118-7044859`, Vulkan/RADV, gfx1151; opencode 1.18.18 as harness
-**Models:** Qwen3.6-35B-A3B (MoE, 3B active) vs Qwen3.8-27B (dense hybrid GDN, MTP on)
+**Status:** measured, single pass per task at temperature 0.6; totals carry at least a +-2 task error bar (see Result 2)
+**Build:** llama.cpp `b118-7044859`
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.6-35B-A3B UD-Q5_K_M (MoE, 3B active) vs Qwen3.8-27B UD-Q4_K_XL (dense hybrid GDN, MTP on)
+**Harness:** opencode 1.18.18; a private 8-task eval suite with 0/1 checks
+
+## TL;DR
+
+Both models scored **7/8** on an 8-task suite with deterministic checks, and failed
+**different** tasks: the fast MoE gave up in 52 s where the slow hybrid ground for 29 minutes
+and passed, at 6.7x the cost. A same-day re-run of the MoE scored 5/8 from sampling variance
+alone: **a single-pass agent eval is a sample, not a measurement.** Three silent-death bugs
+in the harness itself are listed so you can check yours.
 
 ## Setup
 
@@ -76,3 +87,23 @@ If your benchmark scripts have not failed loudly yet, assume they are failing qu
   measured as a deployed policy.
 - Wall-clock comparisons include agent think time, tool execution, and Go compilation, not
   just inference.
+
+## Reproduce
+
+The suite is private (task fixtures come from a private codebase). The construction is
+reproducible with your own repositories:
+
+- Go tasks SWE-bench style: `git worktree add <sandbox> <fix-commit>^`, then
+  `git checkout <fix-commit> -- '*_test.go'`; the check is `go test ./...`. Validate that
+  the parent alone passes (the fix commit added tests and fix together), so the tests only
+  fail once the tests are brought over.
+- Every check must fail without the fix, pass with the real fix, and not pass when the code
+  is deleted. Run `--passes N` with majority scoring, or pin greedy sampling.
+- Token cost per task is the `prompt_tokens_total` delta (finding 02), wall clock includes
+  tool execution.
+
+## Related
+
+- [10](10-hybrid-gdn-prefix-cache.md): each eval pass is a new session and pays the full harness prefill
+- [04](04-hybrid-gdn-context-scaling.md): the architecture behind the hybrid's tenacity at depth
+- [01](01-mtp-concurrency.md): why MTP was on for the hybrid and off for the MoE

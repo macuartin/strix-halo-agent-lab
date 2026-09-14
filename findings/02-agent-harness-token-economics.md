@@ -1,7 +1,25 @@
 # What an agent harness actually costs, measured at the server
 
-**Date:** 2026-08-15
-**Build:** llama.cpp `b118-7044859`, Vulkan/RADV; opencode 1.18.18 as the harness
+**Date:** 2026-08-15; postscript 2026-09-14
+**Status:** measured; Result 2 is qualified by [10](10-hybrid-gdn-prefix-cache.md)
+**Build:** llama.cpp `b118-7044859`; postscript on `b10944` (`b6b003d2c`)
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.6-35B-A3B UD-Q5_K_M
+**Harness:** opencode 1.18.18; Codex CLI 0.154.0 with `wire_api = "responses"` (postscript)
+
+> **Qualified by [finding 10](10-hybrid-gdn-prefix-cache.md) (2026-09-14).** The prefix
+> cache claim in Result 2 holds for a conversation that **extends** the cached one. On the
+> hybrid GDN family a request that diverges earlier than the last micro-batch gets no reuse
+> at all, so every new session pays the full prefill regardless of how stable the prefix is.
+
+## TL;DR
+
+A configured opencode agent cost **32,921 tokens** before reading the task, and one MCP
+server's JSON schemas were 66% of that; scoping it to its own agent brought the harness to
+8,452 (-74%). Turns 2..N cost 1 to 14 tokens because the prefix cache absorbs a byte-stable
+prefix, so **invalidation, not size, is the expense**. Postscript: Codex CLI's first request is
+18.7K tokens, nine of its 21 tools are silently dropped by the server, and config pruning
+takes it to 6.1K.
 
 ## Method
 
@@ -87,3 +105,28 @@ the two MCP servers and the bundled plugins disabled) took the first request fro
 tokens and 21 tools to 6.1K tokens and 5 tools**, and the next identical session processed
 4 tokens. The plugin block disappears with `features.apps = false`; [openai/codex#38881](https://github.com/openai/codex/issues/38881) reports that
 `features.recommended_plugins = false` alone does not remove it.
+
+## Reproduce
+
+Token cost of a harness, from the server counter:
+
+```
+KEY=...; M=qwen3.6-35b-a3b
+before=$(curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:18080/metrics?model=$M" \
+  | awk '/^llamacpp:prompt_tokens_total/{print $2}')
+opencode run -m framework/$M "reply OK" >/dev/null
+after=$(curl -s -H "Authorization: Bearer $KEY" "http://127.0.0.1:18080/metrics?model=$M" \
+  | awk '/^llamacpp:prompt_tokens_total/{print $2}')
+echo $((after - before))   # tokens the server actually processed
+```
+
+Repeat the same command: the second delta is the cache. What the harness sends versus
+what the model sees (postscript): put a logging HTTP proxy between the harness and the
+router, save each request body, and tokenize its parts with `POST /tokenize`. Compare the
+count with `prompt_n` in the server log for the same request.
+
+## Related
+
+- [10](10-hybrid-gdn-prefix-cache.md): why a new session reprocesses the prefix this file says is cached
+- [03](03-router-mode-gotchas.md): item 6: how a new session lands on a live conversation's slot
+- [07](07-complementary-failures-and-eval-variance.md): the eval suite where each pass is a new session and pays this cost

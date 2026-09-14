@@ -1,9 +1,19 @@
 # Hybrid GDN models get no cross-session prefix reuse: a new session is a full prefill
 
 **Date:** 2026-09-14
-**Build:** llama.cpp `b10944` (`b6b003d2c`, 2026-09-13), Vulkan (RADV), gfx1151, router mode
-**Models:** Qwen3.6-35B-A3B UD-Q5_K_M (`-c 524288 -np 8 --kv-unified --cache-ram 8192 -ub 1024`),
-Ornith-1.5-35B-A3B Q5_K_M (same `qwen35moe` architecture, `-np 2 --no-kv-unified`)
+**Status:** measured; qualifies [02](02-agent-harness-token-economics.md) and [05](05-vulkan-tuning-gfx1151.md); upstream fix open
+**Build:** llama.cpp `b10944` (`b6b003d2c`, 2026-09-13), router mode
+**Backend:** Vulkan (RADV), gfx1151
+**Models:** Qwen3.6-35B-A3B UD-Q5_K_M (`-c 524288 -np 8 --kv-unified --cache-ram 8192 -ub 1024`); Ornith-1.5-35B-A3B Q5_K_M, same `qwen35moe` architecture (`-np 2 --no-kv-unified`)
+**Harness:** none for the controlled table; opencode 1.18.30 and Codex CLI 0.154.0 for the log evidence
+
+## TL;DR
+
+On the Qwen3.5/3.6 hybrid family a request that diverges from the cached prompt anywhere but
+the last micro-batch reprocesses **the whole prompt**: 13,689 of 13,700 tokens at a 70%
+divergence, 1,034 at 98%. Identical to the token with denser checkpoints, without `mmproj`, and
+with non-unified KV on a second model. It is upstream issue #22384; the fix, PR #24785, is
+open. **Every new agent session is a full prefill; session count is the cost driver.**
 
 Finding 02 says the prefix cache "absorbs everything until you invalidate it", and finding 05
 says the standard prefix cache "works fine" on the Qwen3.5/3.6/3.8 family. Both are true only
@@ -130,3 +140,34 @@ same day:
   is not a measurement.
 - The `cache_n = 17` floor was not traced to a specific line; it is consistent with the
   position-zero checkpoint clause above, but I did not confirm it in the debug log.
+
+## Reproduce
+
+```
+KEY=...; M=qwen3.6-35b-a3b
+# base: a ~13K-token prompt; then the same prompt with a marker inserted at 70% of the text
+python3 - <<'EOF'
+import json, urllib.request
+txt = open("/path/to/llama.cpp/src/llama-model.cpp").read()[:48000]
+def ask(content):
+    body = {"model": "qwen3.6-35b-a3b", "max_tokens": 1, "cache_prompt": True,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [{"role": "system", "content": "Eres un asistente. Responde con una palabra."},
+                         {"role": "user", "content": content}]}
+    req = urllib.request.Request("http://127.0.0.1:18080/v1/chat/completions",
+        data=json.dumps(body).encode(), headers={"Authorization": "Bearer KEY", "Content-Type": "application/json"})
+    t = json.load(urllib.request.urlopen(req))["timings"]; print(t["prompt_n"], t["cache_n"])
+ask(txt); ask(txt)
+n = len(txt); ask(txt[:int(n*0.70)] + " MARKER " + txt[int(n*0.70):])
+EOF
+```
+
+Expected on this build: `13700 0`, `4 13696`, then `13689 17`. A fixed build would show
+roughly `4100 9600` on the third line.
+
+## Related
+
+- [02](02-agent-harness-token-economics.md): the harness cost this turns into a per-session cost
+- [05](05-vulkan-tuning-gfx1151.md): where `--cache-reuse` on this family was first found to do nothing
+- [03](03-router-mode-gotchas.md): item 6: slot selection and the 50% clearing rule
+- [04](04-hybrid-gdn-context-scaling.md): the recurrent state that makes decode flat and prefix reuse impossible
