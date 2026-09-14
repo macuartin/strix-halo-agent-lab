@@ -57,3 +57,30 @@ indexer waited for the embeddings endpoint, then died against the chat endpoint 
 still loading (503 "Loading model"), five fast retries and a permanent abort. A model
 router makes "the server is ready" a per-model question, and different models load at very
 different speeds. Probe each model you depend on with a real request.
+
+## 6. Slot selection by prefix similarity steals slots, and below 50% it clears them
+
+`get_available_slot` picks the idle slot with the highest common-prefix similarity above
+`--slot-prompt-similarity` (default 0.10). An empty slot has similarity 0, so any new
+conversation that shares more than 10% of its prefix with a live one (the same harness
+prompt, a different task) is routed onto that conversation's slot instead of an empty one.
+In a Codex session on 2026-09-13, all 398 slot selections landed on slot 7 with eight slots
+configured.
+
+What happens next depends on `f_keep`, the fraction of the resident prompt the new request
+would preserve. At 0.5 or above the slot is reused in place. Below 0.5 the server saves the
+resident prompt to the host-RAM prompt cache, looks for a better match there, and if none
+qualifies **clears the slot** (`prompt_clear`) rather than truncating it: `f_sim = 0.43,
+f_keep = 0.24` was followed by the entire 18.7K-token prompt being processed again. On a hybrid GDN model the
+distinction is moot (finding 10: a partial prefix is not reusable anyway), but on a
+full-attention model this is a 43% prefix thrown away by policy. Raising
+`--slot-prompt-similarity` above the cross-session similarity of your harness sends new
+sessions to empty slots and leaves live conversations alone.
+
+## 7. `GET /models?reload=1` restarts the instances whose preset text changed
+
+The preset reload is not a metadata refresh. Any instance whose `.ini` section differs from
+the one it was launched with, including a changed comment line, is stopped and must be
+loaded again. Removing a different model's section leaves it alone. Edit presets, reload,
+then `POST /models/load` the ones that disappeared; do not do it while an agent is mid-turn
+on that model.

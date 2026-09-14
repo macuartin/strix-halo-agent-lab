@@ -52,3 +52,38 @@ seconds per avoided invalidation.
   mid-session cache rewrites.
 - The counter measures processed tokens, so a warm cache makes a big harness look free.
   Always measure cold start and steady state separately.
+
+## Postscript (2026-09-14): the same measurement on Codex CLI, and what the server throws away
+
+Codex CLI (0.154) against the same router, `wire_api = "responses"`, captured with a
+logging proxy between the two and tokenized with the router's own `/tokenize`:
+
+| Piece of the first request | Tokens | Note |
+|---|---|---|
+| `instructions` (Codex base prompt) | 3,664 | static |
+| 21 tool definitions, compact JSON | 16,973 | see below |
+| `<skills_instructions>` | 1,806 | lists every skill root, plugin skills included |
+| `<recommended_plugins>` | 2,068 to ~8,000 | a list of ChatGPT marketplace plugins **not installed**; 33,516 characters on 2026-09-13 |
+| environment context and the task | ~220 | the working directory lives here |
+
+Three things the counter cannot tell you and the capture can:
+
+1. **Nine of the 21 tools never reach the model.** They are of type `namespace` (MCP
+   servers, the ChatGPT app connectors, the multi-agent tool) and llama-server's
+   Responses-to-chat conversion drops them with a warning (`unsupported Responses tool type
+   'namespace' skipped`, 2,007 times in three days of logs). The 7,402-token `codex_apps__sites`
+   schema costs Codex's request size and nothing else. The router processed 10,144 tokens for
+   a request whose JSON tokenizes to 24,500.
+2. **The plugin list is different on every session.** Same length, different content hash
+   between two sessions two minutes apart. It sits right after the static part of the prompt,
+   so every new session diverged at ~43% of the prefix and (finding 10) reprocessed all of it:
+   four `codex exec` launches on 2026-09-13, four 18.7K-token prefills, matched to the second
+   in the router log.
+3. **`prompt_cache_key` is sent and ignored.** Codex sets it per session; the string does
+   not appear in the server sources.
+
+Pruning by config (`features.apps/multi_agent/goals = false`, `web_search = "disabled"`,
+the two MCP servers and the bundled plugins disabled) took the first request from **18.7K
+tokens and 21 tools to 6.1K tokens and 5 tools**, and the next identical session processed
+4 tokens. The plugin block disappears with `features.apps = false`; [openai/codex#38881](https://github.com/openai/codex/issues/38881) reports that
+`features.recommended_plugins = false` alone does not remove it.

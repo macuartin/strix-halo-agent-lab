@@ -17,7 +17,7 @@ flags, and method needed to replicate or refute it.
 | Machine | Framework Desktop, Ryzen AI MAX+ 395 (Strix Halo) |
 | GPU | Radeon 8060S iGPU, `gfx1151`, Vulkan (RADV) backend |
 | Memory | 128 GB unified, 125.1 GiB GTT, ~215 GB/s (the real constraint) |
-| OS | Omarchy (Arch), kernel 7.1.9 — findings 01-07 were measured on Ubuntu 24.04 HWE |
+| OS | Omarchy (Arch), kernel 7.2.3 for findings 09-11; findings 01-07 were measured on Ubuntu 24.04 HWE |
 | Runtime | llama.cpp, router mode, multi-model on one endpoint |
 | Harness | opencode against the OpenAI-compatible endpoint; MCP servers attached |
 
@@ -37,6 +37,8 @@ follows that rule or the finding explains why it does not.
 | [06](findings/06-mtp-pmin-and-bandwidth-arithmetic.md) | MTP p-min A/B and the arithmetic behind community speed gaps | p-min 0.7 vs 0.0 is a **wash**; custom-quant speed claims decompose into bytes-per-token; two independent benches agree to 3 significant figures |
 | [07](findings/07-complementary-failures-and-eval-variance.md) | Complementary model failures and the single-run eval trap | Fast MoE and tenacious dense hybrid fail **different** tasks (7/8 each); same task passed in 473 s, failed in 20 s, passed again: single-pass evals are samples, not measurements |
 | [09](findings/09-rocr-busy-spin-gfx1151.md) | The ROCR runtime that steals a core | ROCm wheels spin one full core forever after any GPU op (**1009 ticks/10s → 0** with a 15-symbol shim); the throughput win I first reported **did not survive warmup**; a Vulkan llama.cpp is unaffected |
+| [10](findings/10-hybrid-gdn-prefix-cache.md) | Hybrid GDN models get no cross-session prefix reuse | A request that diverges anywhere but the last micro-batch reprocesses **the whole prompt** (13,689 of 13,700 tokens at 70%); invariant to checkpoint spacing, `mmproj` and unified KV; upstream fix still open |
+| [11](findings/11-125b-model-on-125gib-apu.md) | A 125B MoE on a 125 GiB APU | Flash-Next is ~80 GiB of GTT **plus 27 GiB of host RAM** for its n-gram table; zram compresses quantized weights **1.08x**; two OOM kills in one afternoon, `gttsize` above physical RAM |
 
 ## Method, in three rules
 
